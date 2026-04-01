@@ -17,7 +17,6 @@ struct AssetImageView: View {
                     .fill(Color(UIColor.systemGray5))
             }
         }
-        // ✅ id: asset.localIdentifier prevents stale image loading when cells reuse
         .task(id: asset.localIdentifier) {
             image = await loadImage(targetSize: CGSize(width: 250, height: 250), scale: displayScale)
         }
@@ -26,8 +25,6 @@ struct AssetImageView: View {
     private func loadImage(targetSize: CGSize, scale: CGFloat) async -> UIImage? {
         let manager = PHImageManager.default()
         let options = PHImageRequestOptions()
-        options.isNetworkAccessAllowed = true
-        // ✅ highQualityFormat = one delivery, not multiple callbacks
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true
 
@@ -36,7 +33,6 @@ struct AssetImageView: View {
             height: targetSize.height * scale
         )
 
-        // ✅ withCheckedContinuation bridges callback → async safely (resumes exactly once)
         return await withCheckedContinuation { continuation in
             manager.requestImage(
                 for: asset,

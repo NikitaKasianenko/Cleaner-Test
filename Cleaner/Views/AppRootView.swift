@@ -2,20 +2,17 @@
 //  AppRootView.swift
 //  Cleaner
 //
-//  Created by Nykyta Kasianenko on 30.03.2026.
-//
 
 import SwiftUI
 
 @main
 struct CleanerApp: App {
-    // Создаем роутер один раз на все приложение
-    @State private var router = AppRouter()
-    
+    @State private var env = AppEnvironment.live
+
     var body: some Scene {
         WindowGroup {
             ZStack {
-                if router.hasCompletedOnboarding {
+                if env.router.hasCompletedOnboarding {
                     MainView()
                         .transition(.opacity)
                 } else {
@@ -23,10 +20,8 @@ struct CleanerApp: App {
                         .transition(.opacity)
                 }
             }
-            // Передаем роутер во все дочерние View
-            .environment(router)
+            .environment(env)
+            .environment(env.router)
         }
     }
 }
-
-

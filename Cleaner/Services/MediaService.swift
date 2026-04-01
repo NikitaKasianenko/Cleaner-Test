@@ -1,308 +1,164 @@
-//
-//  MediaService.swift
-//  Cleaner
-//
-//  Created by Nykyta Kasianenko on 30.03.2026.
-//
+// MediaService.swift
+// Now a thin orchestrator. It composes the services and runs the analysis.
+// It does NOT know how to fetch from Photos, compute file sizes, or map models —
+// those responsibilities now live in dedicated services.
 
 import SwiftUI
 import Photos
 
-// 1. Протокол для абстракции
-protocol MediaServiceProtocol {
+// MARK: - Protocol
+
+protocol MediaServiceProtocol: Sendable {
     func fetchCategories() async -> [MediaCategory]
     func fetchCategoryDetails(for category: MediaCategory) async -> [MediaGroup]
-    func updateCategoryStats(for categoryTitle: String, newCount: Int)
+    func updateCategoryStats(for type: CategoryTitle, newCount: Int) async
 }
 
-// 3. Настройка Environment для внедрения зависимостей (DI)
-private struct MediaServiceKey: EnvironmentKey {
-    static let defaultValue: any MediaServiceProtocol = MediaService()
-}
-
-extension EnvironmentValues {
-    var mediaService: any MediaServiceProtocol {
-        get { self[MediaServiceKey.self] }
-        set { self[MediaServiceKey.self] = newValue }
-    }
-}
+// MARK: - Implementation
 
 final class MediaService: MediaServiceProtocol, @unchecked Sendable {
-    
-    private let cacheManager = CacheManager()
-    private let duplicateAnalyzer: DuplicateAnalyzerProtocol = DuplicateAnalyzerService()
-    private let similarAnalyzer: SimilarAnalyzerProtocol = SimilarAnalyzerService()
+
+    private let libraryService: any PhotoLibraryServiceProtocol
+    private let cacheManager: CacheManager
+    private let duplicateAnalyzer: any DuplicateAnalyzerProtocol
+    private let similarAnalyzer: any SimilarAnalyzerProtocol
+    private let fileSizeService: any FileSizeServiceProtocol
     private var galleryObserver: GalleryObserver?
-    
-    init() {
 
-            self.galleryObserver = GalleryObserver(onGalleryChanged: { [weak self] in
-                print("🔄 [System] Галерея змінилася! Скидаємо кеші...")
-                
-                // Скидаємо кеш головного екрана
-                self?.cacheManager.clearCache()
-                DispatchQueue.main.async {
-                                NotificationCenter.default.post(name: Notification.Name("GalleryChanged"), object: nil)
-                }
-            })
-        }
-    
-    private func getSystemPhotosCount() -> Int {
-            return PHAsset.fetchAssets(with: PHFetchOptions()).count
-        }
-    
-    func fetchCategories() async -> [MediaCategory] {
-            let currentSystemCount = getSystemPhotosCount()
-            let lastSystemCount = UserDefaults.standard.integer(forKey: "LastSystemTotalCount")
-            let cachedCategories = await cacheManager.loadCachedCategories()
-            
-            // СЦЕНАРІЙ А: Кеш є, але кількість фотографій на пристрої змінилася (Холодний старт)
-            if let cached = cachedCategories, currentSystemCount != lastSystemCount {
-                print("🔄 [Service] Зміни в галереї виявлено! Віддаємо кеш, оновлюємо у фоні...")
-                
-                // Запускаємо фонове оновлення, не блокуючи Головний екран
-                Task {
-                    let freshData = await performFullGalleryAnalysis()
-                    
-                    // Оновлюємо кеш та запам'ятовуємо нове загальне число
-                    await cacheManager.save(categories: freshData)
-                    UserDefaults.standard.set(currentSystemCount, forKey: "LastSystemTotalCount")
-                    
-                    // Сигналізуємо Головному екрану, що треба тихо перемалювати цифри
-                    await MainActor.run {
-                        NotificationCenter.default.post(name: Notification.Name("GalleryChanged"), object: nil)
-                    }
-                }
-                
-                return cached // Миттєво віддаємо старий кеш для швидкості
-            }
-            
-            // СЦЕНАРІЙ Б: Все абсолютно актуально (змін не було)
-            if let cached = cachedCategories, currentSystemCount == lastSystemCount {
-                return cached
-            }
-            
-            // СЦЕНАРІЙ В: Найперший запуск додатка (кешу ще не існує)
-            print("⚙️ [Service] Кешу немає. Запускаємо повний аналіз...")
-            let freshData = await performFullGalleryAnalysis()
-            await cacheManager.save(categories: freshData)
-            UserDefaults.standard.set(currentSystemCount, forKey: "LastSystemTotalCount")
-            
-            return freshData
-        }
+    init(
+        libraryService: any PhotoLibraryServiceProtocol,
+        cacheManager: CacheManager,
+        duplicateAnalyzer: any DuplicateAnalyzerProtocol,
+        similarAnalyzer: any SimilarAnalyzerProtocol,
+        fileSizeService: any FileSizeServiceProtocol
+    ) {
+        self.libraryService   = libraryService
+        self.cacheManager     = cacheManager
+        self.duplicateAnalyzer = duplicateAnalyzer
+        self.similarAnalyzer  = similarAnalyzer
+        self.fileSizeService  = fileSizeService
 
-
-        // 4. МЕТОД ДЛЯ ТОЧКОВОГО ОНОВЛЕННЯ З СЕРЕДИНИ КАТЕГОРІЇ
-        func updateCategoryStats(for categoryTitle: String, newCount: Int) {
-            Task {
-                // Беремо поточний кеш (бо він може бути вже відмальований)
-                guard var currentCategories = await cacheManager.loadCachedCategories() else { return }
-                
-                if let index = currentCategories.firstIndex(where: { $0.title == categoryTitle }) {
-                    // Оновлюємо ТІЛЬКИ текст однієї категорії
-                    let updatedCategory = MediaCategory(
-                        id: currentCategories[index].id,
-                        title: currentCategories[index].title,
-                        subtitle: "\(newCount) Items",
-                        iconName: currentCategories[index].iconName,
-                        isLocked: currentCategories[index].isLocked
-                    )
-                    currentCategories[index] = updatedCategory
-                    
-                    // Зберігаємо і кажемо UI оновитись
-                    await cacheManager.save(categories: currentCategories)
-                    await MainActor.run {
-                        NotificationCenter.default.post(name: Notification.Name("GalleryChanged"), object: nil)
-                    }
-                }
+        self.galleryObserver = GalleryObserver { [weak cacheManager] in
+            cacheManager?.clearCache()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .galleryChanged, object: nil)
             }
         }
-
-    // MARK: - Головний двигун аналізу
-    private func performFullGalleryAnalysis() async -> [MediaCategory] {
-            var categories: [MediaCategory] = []
-            
-            let screenshots = fetchSystemCategory(subtype: .photoScreenshot)
-            let livePhotos = fetchSystemCategory(subtype: .photoLive)
-            let screenRecordings = fetchSystemCategory(subtype: .videoScreenRecording)
-            
-            categories.append(MediaCategory(title: "Screenshots", subtitle: "\(screenshots.count) Items", iconName: "ScreenShoots", isLocked: false))
-            categories.append(MediaCategory(title: "Live Photos", subtitle: "\(livePhotos.count) Items", iconName: "LivePhotos", isLocked: false))
-            categories.append(MediaCategory(title: "Screen Recordings", subtitle: "\(screenRecordings.count) Items", iconName: "ScreenRecordings", isLocked: false))
-            
-            // --- ЗАПУСКАЄМО ВАЖКІ АНАЛІЗАТОРИ ПАРАЛЕЛЬНО ---
-            // Використовуємо async let, щоб вони працювали одночасно, а не чекали один одного!
-            async let duplicatesTask = duplicateAnalyzer.findExactDuplicates()
-            async let similarPhotosTask = similarAnalyzer.findSimilarPhotos()
-            async let similarVideosTask = similarAnalyzer.findSimilarVideos()
-            
-            // Чекаємо результатів обох
-            let duplicateGroups = await duplicatesTask
-            let similarGroups = await similarPhotosTask
-            let similarVideoGroups = await similarVideosTask
-            
-            // Рахуємо кількість фоток
-            let totalDuplicatePhotos = duplicateGroups.reduce(0) { $0 + $1.count }
-            let totalSimilarPhotos = similarGroups.reduce(0) { $0 + $1.count }
-            let totalSimilarVideos = similarVideoGroups.reduce(0) { $0 + $1.count }
-            
-            // Додаємо в масив
-            categories.insert(MediaCategory(title: "Duplicate Photos", subtitle: "\(totalDuplicatePhotos) Items", iconName: "DublicatePhotos", isLocked: false), at: 0)
-                
-            categories.insert(MediaCategory(title: "Similar Photos", subtitle: "\(totalSimilarPhotos) Items", iconName: "SimilarPhotos", isLocked: false), at: 1)
-                
-            categories.append(MediaCategory(title: "Similar Videos", subtitle: "\(totalSimilarVideos) Items", iconName: "SimilarVideos", isLocked: false))
-                
-            return categories
-        }
-    
-    // MARK: - Допоміжні методи запитів до Photos
-    
-    nonisolated private func fetchSystemCategory(subtype: PHAssetMediaSubtype) -> PHFetchResult<PHAsset> {
-        let options = PHFetchOptions()
-        // Магія Apple: фільтруємо базу даних напряму за допомогою предиката
-        options.predicate = NSPredicate(format: "(mediaSubtype & %d) != 0", subtype.rawValue)
-        
-        // Якщо це відео, шукаємо у відео, інакше у фотографіях
-        let mediaType: PHAssetMediaType = subtype == .videoScreenRecording ? .video : .image
-        options.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-            options.predicate!,
-            NSPredicate(format: "mediaType == %d", mediaType.rawValue)
-        ])
-        
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        
-        return PHAsset.fetchAssets(with: options)
     }
-    
+
+    // MARK: - Fetch categories (main screen)
+
+    func fetchCategories() async -> [MediaCategory] {
+        let currentCount  = libraryService.totalAssetsCount()
+        let lastCount     = UserDefaults.standard.integer(forKey: "LastSystemTotalCount")
+        let cachedCategories = await cacheManager.loadCachedCategories()
+
+        // if gallery do not changed
+        if let cached = cachedCategories, currentCount == lastCount {
+            return cached
+        }
+
+        // if gallery changed - return stale data immediately
+        // refresh silently in the background
+        if let cached = cachedCategories, currentCount != lastCount {
+            Task {
+                let fresh = await fullAnalysis()
+                await cacheManager.save(categories: fresh)
+                UserDefaults.standard.set(currentCount, forKey: "LastSystemTotalCount")
+                
+            }
+            return cached
+        }
+
+        // first launch - wait for full analysis
+        let fresh = await fullAnalysis()
+        await cacheManager.save(categories: fresh)
+        UserDefaults.standard.set(currentCount, forKey: "LastSystemTotalCount")
+        return fresh
+    }
+
+    // MARK: - Fetch details (category screen)
+
     func fetchCategoryDetails(for category: MediaCategory) async -> [MediaGroup] {
-            // Обов'язково йдемо у фон, щоб крутилка ProgressView не зависала на 2000 фотографіях!
-            return await Task.detached(priority: .userInitiated) {
-                
-                var resultGroups: [MediaGroup] = []
-                
-                // 1. ДІСТАЄМО КЕШ РОЗМІРІВ (ID -> Мегабайти)
-                var sizeCache = UserDefaults.standard.dictionary(forKey: "PhotoSizeCache") as? [String: Double] ?? [:]
-                var cacheWasUpdated = false
-                
-                // 2. РОЗУМНА ФУНКЦІЯ ДЛЯ ОТРИМАННЯ РОЗМІРУ
-                let getSize: (PHAsset) -> Double = { asset in
-                    let id = asset.localIdentifier
-                    
-                    // Якщо є в кеші — віддаємо миттєво
-                    if let cachedSize = sizeCache[id] {
-                        return cachedSize
-                    }
-                    
-                    // Якщо немає — рахуємо по-справжньому
-                    let resources = PHAssetResource.assetResources(for: asset)
-                    let unsignedInt64 = resources.first?.value(forKey: "fileSize") as? CLong
-                    let sizeInMB = Double(unsignedInt64 ?? 0) / (1024.0 * 1024.0)
-                    
-                    // Зберігаємо і ставимо прапорець
-                    sizeCache[id] = sizeInMB
-                    cacheWasUpdated = true
-                    
-                    return sizeInMB
-                }
-                
-                // 3. ТВІЙ КРАСИВИЙ СВІТЧ (передаємо getSize в хелпери)
-                switch category.title {
-                case "Screenshots":
-                    let items = self.mapFetchResultToItems(self.fetchSystemCategory(subtype: .photoScreenshot), sizeProvider: getSize)
-                    resultGroups.append(MediaGroup(items: items))
+        switch category.type {
 
-                case "Live Photos":
-                    let items = self.mapFetchResultToItems(self.fetchSystemCategory(subtype: .photoLive), sizeProvider: getSize)
-                    resultGroups.append(MediaGroup(items: items))
+        case .screenshots:
+            let items = MediaMapper.mapToItems(
+                libraryService.fetchAssets(subtype: .photoScreenshot),
+                sizeService: fileSizeService
+            )
+            return [MediaGroup(items: items)]
 
-                case "Screen Recordings":
-                    let items = self.mapFetchResultToItems(self.fetchSystemCategory(subtype: .videoScreenRecording), sizeProvider: getSize)
-                    resultGroups.append(MediaGroup(items: items))
+        case .livePhotos:
+            let items = MediaMapper.mapToItems(
+                libraryService.fetchAssets(subtype: .photoLive),
+                sizeService: fileSizeService
+            )
+            return [MediaGroup(items: items)]
 
-                case "Duplicate Photos":
-                    let assetGroups = await self.duplicateAnalyzer.findExactDuplicates()
-                    resultGroups = self.mapAssetGroupsToMediaGroups(assetGroups, sizeProvider: getSize)
+        case .screenRecordings:
+            let items = MediaMapper.mapToItems(
+                libraryService.fetchAssets(subtype: .videoScreenRecording),
+                sizeService: fileSizeService
+            )
+            return [MediaGroup(items: items)]
 
-                case "Similar Photos":
-                    let assetGroups = await self.similarAnalyzer.findSimilarPhotos()
-                    resultGroups = self.mapAssetGroupsToMediaGroups(assetGroups, sizeProvider: getSize)
+        case .duplicatePhotos:
+            let groups = await duplicateAnalyzer.findExactDuplicates()
+            return MediaMapper.mapToGroups(groups, sizeService: fileSizeService)
 
-                case "Similar Videos":
-                    // ВИПРАВЛЕНО: тут має бути similarVideoAnalyzer!
-                    let assetGroups = await self.similarAnalyzer.findSimilarVideos()
-                    resultGroups = self.mapAssetGroupsToMediaGroups(assetGroups, sizeProvider: getSize)
+        case .similarPhotos:
+            let groups = await similarAnalyzer.findSimilarPhotos()
+            return MediaMapper.mapToGroups(groups, sizeService: fileSizeService)
 
-                default:
-                    break
-                }
-                
-                // 4. ЗБЕРІГАЄМО КЕШ, ЯКЩО БУЛИ НОВІ ФОТО
-                if cacheWasUpdated {
-                    UserDefaults.standard.set(sizeCache, forKey: "PhotoSizeCache")
-                    print("✅ [Cache] Оновлено кеш розмірів для \(sizeCache.count) файлів")
-                }
-
-                return resultGroups
-            }.value
+        case .similarVideos:
+            let groups = await similarAnalyzer.findSimilarVideos()
+            return MediaMapper.mapToGroups(groups, sizeService: fileSizeService)
         }
-        
-        // MARK: - Хелпери для мапінгу (перетворення)
-        
-        // Для звичайних списків (Скріншоти, Лайви)
-    nonisolated private func mapFetchResultToItems(_ fetchResult: PHFetchResult<PHAsset>, sizeProvider: @escaping (PHAsset) -> Double) -> [MediaItem] {
-            var items: [MediaItem] = []
-            fetchResult.enumerateObjects { asset, _, _ in
-                // Використовуємо передану функцію для отримання розміру
-                let sizeInMB = sizeProvider(asset)
-                items.append(MediaItem(asset: asset, fileSize: sizeInMB, isSelected: false, isBest: false))
+    }
+
+    func updateCategoryStats(for type: CategoryTitle, newCount: Int) async {
+        guard var categories = await cacheManager.loadCachedCategories() else { return }
+        guard let index = categories.firstIndex(where: { $0.type == type }) else { return }
+
+        categories[index] = MediaCategory(
+            id:       categories[index].id,
+            type:     type,
+            subtitle: "\(newCount) Items",
+            isLocked: categories[index].isLocked
+        )
+        await cacheManager.save(categories: categories)
+    }
+
+    private func fullAnalysis() async -> [MediaCategory] {
+        let screenshots     = libraryService.fetchAssets(subtype: .photoScreenshot)
+        let livePhotos      = libraryService.fetchAssets(subtype: .photoLive)
+        let screenRecordings = libraryService.fetchAssets(subtype: .videoScreenRecording)
+
+        // run in parallel
+        async let duplicatesTask     = duplicateAnalyzer.findExactDuplicates()
+        async let similarPhotosTask  = similarAnalyzer.findSimilarPhotos()
+        async let similarVideosTask  = similarAnalyzer.findSimilarVideos()
+
+        let duplicateGroups  = await duplicatesTask
+        let similarGroups    = await similarPhotosTask
+        let similarVideoGroups = await similarVideosTask
+
+        return CategoryTitle.orderedCases.map { type in
+            let count: Int
+            switch type {
+            case .duplicatePhotos:  count = duplicateGroups.reduce(0) { $0 + $1.count }
+            case .similarPhotos:    count = similarGroups.reduce(0) { $0 + $1.count }
+            case .similarVideos:    count = similarVideoGroups.reduce(0) { $0 + $1.count }
+            case .screenshots:      count = screenshots.count
+            case .livePhotos:       count = livePhotos.count
+            case .screenRecordings: count = screenRecordings.count
             }
-            return items
+            return MediaCategory(type: type, subtitle: "\(count) Items", isLocked: false)
         }
-        
-        // Для згрупованих списків (Дублікати) — ТУТ ЛОГІКА ДИЗАЙНУ!
-    nonisolated private func mapAssetGroupsToMediaGroups(_ assetGroups: [[PHAsset]], sizeProvider: @escaping (PHAsset) -> Double) -> [MediaGroup] {
-            var groups: [MediaGroup] = []
-            
-            for assetGroup in assetGroups {
-                var items: [MediaItem] = []
-                
-                // 1. Сортуємо фотографії ВСЕРЕДИНІ групи (найстаріше або найновіше = Best)
-                // Зазвичай найкращим (Best) вважається найперше зроблене фото, тому ascending: true
-                let sortedAssetGroup = assetGroup.sorted {
-                    ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast)
-                }
-                
-                for (index, asset) in sortedAssetGroup.enumerated() {
-                    let sizeInMB = sizeProvider(asset)
-                    let isBest = (index == 0)
-                    let isSelected = !isBest
-                    
-                    items.append(MediaItem(asset: asset, fileSize: sizeInMB, isSelected: isSelected, isBest: isBest))
-                }
-                groups.append(MediaGroup(items: items))
-            }
-            
-            // 2. Сортуємо САМІ ГРУПИ між собою, щоб найновіші дублікати (за датою) були на самому верху екрана
-            groups.sort { group1, group2 in
-                let date1 = group1.items.first?.asset.creationDate ?? Date.distantPast
-                let date2 = group2.items.first?.asset.creationDate ?? Date.distantPast
-                return date1 > date2 // Descending: від нових до старих
-            }
-            
-            return groups
-        }
-        
-        // Швидкий спосіб дізнатися вагу файлу без його завантаження з iCloud
-    nonisolated private func getFileSizeInMB(for asset: PHAsset) -> Double {
-            let resources = PHAssetResource.assetResources(for: asset)
-            guard let resource = resources.first else { return 0.0 }
-            
-            // Використовуємо KVC для швидкого доступу до метаданих розміру
-            let unsignedInt64 = resource.value(forKey: "fileSize") as? CLong
-            let sizeInBytes = Double(unsignedInt64 ?? 0)
-            
-            return sizeInBytes / (1024.0 * 1024.0) // Переводимо байти в Мегабайти
-        }
-    
+    }
+}
+
+extension Notification.Name {
+    static let galleryChanged = Notification.Name("GalleryChanged")
 }

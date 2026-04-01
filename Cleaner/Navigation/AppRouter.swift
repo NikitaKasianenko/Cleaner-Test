@@ -20,7 +20,6 @@ class AppRouter {
     func requestPhotoAccess() async {
         let status = await permissionService.requestPermission()
         
-        // Оновлюємо статус у головному потоці, бо це впливає на UI
         await MainActor.run {
             self.hasPhotoAccess = (status == .granted)
         }
