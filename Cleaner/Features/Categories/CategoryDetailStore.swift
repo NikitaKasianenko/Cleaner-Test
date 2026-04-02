@@ -2,6 +2,9 @@
 //  CategoryDetailStore.swift
 //  Cleaner
 //
+//  Created by Nykyta Kasianenko on 31.03.2026.
+//
+
 
 import SwiftUI
 import Photos

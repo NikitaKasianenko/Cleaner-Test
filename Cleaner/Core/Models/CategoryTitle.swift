@@ -1,6 +1,9 @@
-// CategoryTitle.swift
-// Replaces all the hardcoded String comparisons scattered across the codebase.
-// A typo in "Duplicate Photos" used to silently break an entire screen — never again.
+//
+//  CategoryTitle.swift
+//  Cleaner
+//
+//  Created by Nykyta Kasianenko on 1.04.2026.
+//
 
 import Foundation
 

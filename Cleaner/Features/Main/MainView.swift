@@ -9,6 +9,8 @@ struct MainView: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(AppRouter.self) private var router
 
+    @Environment(\.scenePhase)  private var scenePhase
+    
     @State private var categories: [MediaCategory] = []
 
     let columns = [
@@ -22,20 +24,7 @@ struct MainView: View {
                 LazyVGrid(columns: columns, spacing: 16) {
                     ForEach(categories) { category in
                         Button {
-                            if router.hasPhotoAccess {
-                                router.navigate(to: .categoryDetail(category))
-                            } else {
-                                Task {
-                                    await router.requestPhotoAccess()
-                                    if router.hasPhotoAccess {
-                                        router.navigate(to: .categoryDetail(category))
-                                    } else if let url = URL(string: UIApplication.openSettingsURLString) {
-                                        await MainActor.run {
-                                            UIApplication.shared.open(url)
-                                        }
-                                    }
-                                }
-                            }
+                            handleCategoryTap(category)
                         } label: {
                             CategoryCell(category: category, hasAccess: router.hasPhotoAccess)
                         }
@@ -69,8 +58,34 @@ struct MainView: View {
         .task {
             categories = await env.mediaService.fetchCategories()
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task {
+                categories = await env.mediaService.fetchCategories()
+            }
+        }
     }
+    
+    private func handleCategoryTap(_ category: MediaCategory){
+        if router.hasPhotoAccess {
+            router.navigate(to: .categoryDetail(category))
+        } else {
+            Task {
+                await router.requestPhotoAccess()
+                if router.hasPhotoAccess {
+                    router.navigate(to: .categoryDetail(category))
+                } else if let url = URL(string: UIApplication.openSettingsURLString) {
+                    await MainActor.run {
+                        UIApplication.shared.open(url)
+                    }
+                }
+            }
+        }
+    }
+
+    
 }
+
 
 
 struct CategoryCell: View {

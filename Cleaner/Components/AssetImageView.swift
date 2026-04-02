@@ -1,3 +1,10 @@
+//
+//  AssetImageView.swift
+//  Cleaner
+//
+//  Created by Nykyta Kasianenko on 1.04.2026.
+//
+
 import SwiftUI
 import Photos
 

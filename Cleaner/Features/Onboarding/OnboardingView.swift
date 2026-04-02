@@ -2,11 +2,13 @@
 //  OnboardingView.swift
 //  Cleaner
 //
+//  Created by Nykyta Kasianenko on 30.03.2026.
+//
+
 
 import SwiftUI
 
 struct OnboardingView: View {
-    // AppEnvironment owns the router — access it through the container
     @Environment(AppRouter.self) private var router
     @State private var currentPage = 0
 
@@ -56,8 +58,6 @@ struct OnboardingView: View {
         .background(Color.white)
     }
 }
-
-// MARK: - Page View
 
 struct OnboardingPageView: View {
     let page: OnboardingPage

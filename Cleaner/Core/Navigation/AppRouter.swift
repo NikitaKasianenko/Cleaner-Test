@@ -1,3 +1,11 @@
+//
+//  AppRouter.swift
+//  Cleaner
+//
+//  Created by Nykyta Kasianenko on 30.03.2026.
+//
+
+
 import SwiftUI
 
 enum AppRoute: Hashable {

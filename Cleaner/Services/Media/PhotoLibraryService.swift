@@ -1,6 +1,9 @@
-// PhotoLibraryService.swift
-// Single responsibility: query the Photos database.
-// Zero knowledge of MediaCategory, caching, or UI models.
+//
+//  PhotoLibraryService.swift
+//  Cleaner
+//
+//  Created by Nykyta Kasianenko on 01.04.2026.
+//
 
 import Foundation
 import Photos
@@ -13,7 +16,7 @@ protocol PhotoLibraryServiceProtocol: Sendable {
 final class PhotoLibraryService: PhotoLibraryServiceProtocol, @unchecked Sendable {
 
     func fetchAssets(subtype: PHAssetMediaSubtype) -> PHFetchResult<PHAsset> {
-        let options = PHFetchOptions()
+        let options = PHFetchOptions()  
 
         let subtypePredicate = NSPredicate(
             format: "(mediaSubtype & %d) != 0",
