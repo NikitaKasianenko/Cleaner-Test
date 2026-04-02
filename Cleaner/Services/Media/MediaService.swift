@@ -9,47 +9,22 @@
 import SwiftUI
 import Photos
 
-protocol MediaServiceProtocol: Sendable {
+protocol MediaServiceProtocol {
     func fetchCategories() async -> [MediaCategory]
     func fetchCategoryDetails(for category: MediaCategory) async -> [MediaGroup]
     func updateCategoryStats(for type: CategoryTitle, newCount: Int) async
 }
 
-// MARK: - Actor-based details cache
-
-actor DetailsCacheStore {
-    private var cache: [CategoryTitle: [MediaGroup]] = [:]
-
-    func get(_ type: CategoryTitle) -> [MediaGroup]? {
-        cache[type]
-    }
-
-    func set(_ type: CategoryTitle, groups: [MediaGroup]) {
-        cache[type] = groups
-    }
-
-    func invalidate(_ type: CategoryTitle) {
-        cache.removeValue(forKey: type)
-    }
-
-    func invalidateAll() {
-        cache.removeAll()
-    }
-}
-
-// MARK: - Service
-
-final class MediaService: MediaServiceProtocol, Sendable {
+final class MediaService: MediaServiceProtocol, @unchecked Sendable {
 
     private let libraryService: any PhotoLibraryServiceProtocol
     private let cacheManager: CacheManager
     private let duplicateAnalyzer: any DuplicateAnalyzerProtocol
     private let similarAnalyzer: any SimilarAnalyzerProtocol
     private let fileSizeService: any FileSizeServiceProtocol
-    private let detailsCache = DetailsCacheStore()
+    private var galleryObserver: GalleryObserver?
 
-    // GalleryObserver is set once after init — nonisolated storage is fine
-    private nonisolated(unsafe) var galleryObserver: GalleryObserver?
+    private var detailsCache: [CategoryTitle: [MediaGroup]] = [:]
 
     init(
         libraryService: any PhotoLibraryServiceProtocol,
@@ -80,7 +55,7 @@ final class MediaService: MediaServiceProtocol, Sendable {
 
         if let cached = cachedCategories, currentCount != lastCount {
             Task {
-                await detailsCache.invalidateAll()
+                detailsCache.removeAll()
                 let fresh = await fullAnalysis()
                 await cacheManager.save(categories: fresh)
                 UserDefaults.standard.set(currentCount, forKey: "LastSystemTotalCount")
@@ -88,7 +63,7 @@ final class MediaService: MediaServiceProtocol, Sendable {
             return cached
         }
 
-        await detailsCache.invalidateAll()
+        detailsCache.removeAll()
         let fresh = await fullAnalysis()
         await cacheManager.save(categories: fresh)
         UserDefaults.standard.set(currentCount, forKey: "LastSystemTotalCount")
@@ -98,12 +73,12 @@ final class MediaService: MediaServiceProtocol, Sendable {
     // MARK: - Fetch details (category screen)
 
     func fetchCategoryDetails(for category: MediaCategory) async -> [MediaGroup] {
-        if let cached = await detailsCache.get(category.type) {
+        if let cached = detailsCache[category.type] {
             return cached
         }
 
         let result = await computeDetails(for: category)
-        await detailsCache.set(category.type, groups: result)
+        detailsCache[category.type] = result
         return result
     }
 
@@ -118,7 +93,7 @@ final class MediaService: MediaServiceProtocol, Sendable {
             isLocked: categories[index].isLocked
         )
         await cacheManager.save(categories: categories)
-        await detailsCache.invalidate(type)
+        detailsCache.removeValue(forKey: type)
     }
 
     // MARK: - Private
@@ -195,7 +170,7 @@ final class MediaService: MediaServiceProtocol, Sendable {
             },
             onPhotosAdded: { [weak self] in
                 self?.cacheManager.clearCache()
-                Task { await self?.detailsCache.invalidateAll() }
+                self?.detailsCache.removeAll()
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: .galleryChanged, object: nil)
                 }

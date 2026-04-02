@@ -255,3 +255,65 @@ extension CategoryDetailView {
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
+
+
+#Preview("Grouped — Duplicates") {
+    let env = AppEnvironment.preview(
+        mediaService: MockMediaService(
+            groups: MockMediaService.mockGroups
+        )
+    )
+    let category = MediaCategory(
+        type: .duplicatePhotos,
+        subtitle: "6 Items",
+        isLocked: false
+    )
+    return CategoryDetailView(
+        store: CategoryDetailStore(
+            category: category,
+            service: env.mediaService
+        )
+    )
+    .environment(env)
+    .environment(env.router)
+}
+
+#Preview("Flat — Screenshots") {
+    let env = AppEnvironment.preview(
+        mediaService: MockMediaService(
+            groups: MockMediaService.mockGroups
+        )
+    )
+    let category = MediaCategory(
+        type: .screenshots,
+        subtitle: "3 Items",
+        isLocked: false
+    )
+    return CategoryDetailView(
+        store: CategoryDetailStore(
+            category: category,
+            service: env.mediaService
+        )
+    )
+    .environment(env)
+    .environment(env.router)
+}
+
+#Preview("Empty") {
+    let env = AppEnvironment.preview(
+        mediaService: MockMediaService(groups: [])
+    )
+    let category = MediaCategory(
+        type: .duplicatePhotos,
+        subtitle: "0 Items",
+        isLocked: false
+    )
+    return CategoryDetailView(
+        store: CategoryDetailStore(
+            category: category,
+            service: env.mediaService
+        )
+    )
+    .environment(env)
+    .environment(env.router)
+}
