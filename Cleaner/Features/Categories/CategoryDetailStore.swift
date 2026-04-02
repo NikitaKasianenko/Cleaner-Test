@@ -5,27 +5,46 @@
 //  Created by Nykyta Kasianenko on 31.03.2026.
 //
 
+//
+//  CategoryDetailStore.swift
+//  Cleaner
+//
 
 import SwiftUI
 import Photos
+import Combine
 
+// @Observable → ObservableObject для iOS 16
 @MainActor
-@Observable
-class CategoryDetailStore {
-    var category: MediaCategory
+final class CategoryDetailStore: ObservableObject {
+    @Published var category: MediaCategory
+    @Published var items: [MediaItem] = []
+    @Published var groups: [MediaGroup] = []
+    @Published var isLoading: Bool = true
+    @Published var showingDeleteAlert = false
 
-    var items: [MediaItem] = []
-    var groups: [MediaGroup] = []
-
-    var isLoading: Bool = true
-    var showingDeleteAlert = false
-
-    @ObservationIgnored
     private let service: any MediaServiceProtocol
 
     init(category: MediaCategory, service: any MediaServiceProtocol) {
         self.category = category
         self.service = service
+    }
+
+    // MARK: - Preview factory
+
+    static func preview(
+        category: MediaCategory,
+        groups: [MediaGroup] = [],
+        items: [MediaItem] = []
+    ) -> CategoryDetailStore {
+        let store = CategoryDetailStore(
+            category: category,
+            service: MockMediaService()
+        )
+        store.groups = groups
+        store.items = items
+        store.isLoading = false
+        return store
     }
 
     var isGroupedLayout: Bool { category.isGrouped }

@@ -6,11 +6,12 @@
 //
 
 import SwiftUI
+import Combine
 
 @main
 struct CleanerApp: App {
-    @State private var env = AppEnvironment.live
-
+    @StateObject private var env = AppEnvironment.live
+ 
     var body: some Scene {
         WindowGroup {
             ZStack {
@@ -22,12 +23,11 @@ struct CleanerApp: App {
                         .transition(.opacity)
                 }
             }
-            .environment(env)
-            .environment(env.router)
+            .environmentObject(env)
+            .environmentObject(env.router)
         }
     }
 }
-
  
 #Preview("Onboarding") {
     let env = AppEnvironment.preview()
@@ -36,8 +36,8 @@ struct CleanerApp: App {
     return ZStack {
         OnboardingView()
     }
-    .environment(env)
-    .environment(env.router)
+    .environmentObject(env)
+    .environmentObject(env.router)
 }
  
 #Preview("Main — onboarding done") {
@@ -48,6 +48,7 @@ struct CleanerApp: App {
     return ZStack {
         MainView()
     }
-    .environment(env)
-    .environment(env.router)
+    .environmentObject(env)
+    .environmentObject(env.router)
 }
+ 

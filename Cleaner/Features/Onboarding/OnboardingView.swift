@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct OnboardingView: View {
-    @Environment(AppRouter.self) private var router
+    @EnvironmentObject private var router: AppRouter
     @State private var currentPage = 0
 
     var body: some View {
@@ -22,7 +22,6 @@ struct OnboardingView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
 
-            // Page dots
             HStack(spacing: 8) {
                 ForEach(0..<onboardingPages.count, id: \.self) { index in
                     Capsule()
@@ -87,9 +86,3 @@ struct OnboardingPageView: View {
         .padding(.top, 44)
     }
 }
-
-//#Preview {
-//    OnboardingView()
-//        .environment(AppEnvironment.preview())
-//        .environment(AppRouter())
-//}

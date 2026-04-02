@@ -7,23 +7,25 @@
 
 
 import SwiftUI
-
+import Photos
+import Combine
+ 
 struct CategoryDetailView: View {
-    @State var store: CategoryDetailStore
+    @StateObject var store: CategoryDetailStore
     @Environment(\.dismiss) private var dismiss
-
+ 
     let columns = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12)
     ]
-
+ 
     var body: some View {
         ZStack {
             Color(UIColor.systemGray6).ignoresSafeArea()
-
+ 
             VStack(spacing: 0) {
                 headerView
-
+ 
                 if store.isLoading {
                     Spacer()
                     ProgressView()
@@ -38,7 +40,7 @@ struct CategoryDetailView: View {
                     photoGrid
                 }
             }
-
+ 
             if store.isAnySelected {
                 VStack {
                     Spacer()
@@ -61,10 +63,11 @@ struct CategoryDetailView: View {
         }
     }
 }
-
-
+ 
+// MARK: - Subviews
+ 
 extension CategoryDetailView {
-
+ 
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -93,11 +96,11 @@ extension CategoryDetailView {
                     }
                 }
             }
-
+ 
             Text(store.category.title)
                 .font(.system(size: 28, weight: .bold))
                 .foregroundColor(.black)
-
+ 
             let isVideo = store.category.type.isVideoCategory
             HStack(spacing: 12) {
                 infoBadge(
@@ -111,7 +114,7 @@ extension CategoryDetailView {
         .padding(.top, 10)
         .padding(.bottom, 20)
     }
-
+ 
     private func infoBadge(icon: String, text: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
@@ -128,7 +131,7 @@ extension CategoryDetailView {
                 .stroke(Color(UIColor.systemGray5), lineWidth: 1)
         )
     }
-
+ 
     private var emptyStateView: some View {
         VStack(spacing: 8) {
             Spacer()
@@ -142,7 +145,7 @@ extension CategoryDetailView {
             Spacer()
         }
     }
-
+ 
     private var photoGrid: some View {
         ScrollView(showsIndicators: false) {
             LazyVGrid(columns: columns, spacing: 12) {
@@ -154,7 +157,7 @@ extension CategoryDetailView {
             .padding(.bottom, 100)
         }
     }
-
+ 
     private var groupedGrid: some View {
         ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 24) {
@@ -185,7 +188,7 @@ extension CategoryDetailView {
             .padding(.bottom, 100)
         }
     }
-
+ 
     private func photoCell(for item: MediaItem) -> some View {
         ZStack(alignment: .bottomTrailing) {
             AssetImageView(asset: item.asset)
@@ -193,8 +196,7 @@ extension CategoryDetailView {
                 .aspectRatio(1, contentMode: .fit)
                 .cornerRadius(12)
                 .clipped()
-
-            // Checkbox
+ 
             Group {
                 if item.isSelected {
                     Image(systemName: "checkmark")
@@ -210,8 +212,7 @@ extension CategoryDetailView {
                 }
             }
             .padding(10)
-
-            // Best badge
+ 
             if item.isBest {
                 VStack {
                     Spacer()
@@ -239,7 +240,7 @@ extension CategoryDetailView {
             }
         }
     }
-
+ 
     private var deleteButton: some View {
         Button(action: { store.showingDeleteAlert = true }) {
             Text("Delete \(store.selectedItemsCount) photos (\(String(format: "%.1f", store.selectedItemsSize)) MB)")
@@ -255,65 +256,58 @@ extension CategoryDetailView {
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
-
-
+ 
+// MARK: - Previews
+ 
+private func fetchAssets(count: Int, type: PHAssetMediaType = .image) -> [PHAsset] {
+    let options = PHFetchOptions()
+    options.fetchLimit = count
+    options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    let result = PHAsset.fetchAssets(with: type, options: options)
+    var assets: [PHAsset] = []
+    result.enumerateObjects { asset, _, _ in assets.append(asset) }
+    return assets
+}
+ 
 #Preview("Grouped — Duplicates") {
-    let env = AppEnvironment.preview(
-        mediaService: MockMediaService(
-            groups: MockMediaService.mockGroups
-        )
+    let assets = fetchAssets(count: 6)
+    let groups: [MediaGroup] = stride(from: 0, to: assets.count - 1, by: 2).map { i in
+        MediaGroup(items: [
+            MediaItem(asset: assets[i],     fileSize: Double.random(in: 1.5...8.0), isSelected: false, isBest: true),
+            MediaItem(asset: assets[i + 1], fileSize: Double.random(in: 1.5...8.0), isSelected: true,  isBest: false),
+        ])
+    }
+    let store = CategoryDetailStore.preview(
+        category: MediaCategory(type: .duplicatePhotos, subtitle: "\(assets.count) Items", isLocked: false),
+        groups: groups
     )
-    let category = MediaCategory(
-        type: .duplicatePhotos,
-        subtitle: "6 Items",
-        isLocked: false
-    )
-    return CategoryDetailView(
-        store: CategoryDetailStore(
-            category: category,
-            service: env.mediaService
-        )
-    )
-    .environment(env)
-    .environment(env.router)
+    return CategoryDetailView(store: store)
 }
-
+ 
 #Preview("Flat — Screenshots") {
-    let env = AppEnvironment.preview(
-        mediaService: MockMediaService(
-            groups: MockMediaService.mockGroups
-        )
+    let assets = fetchAssets(count: 9)
+    let items = assets.map {
+        MediaItem(asset: $0, fileSize: Double.random(in: 0.5...5.0), isSelected: false, isBest: false)
+    }
+    let store = CategoryDetailStore.preview(
+        category: MediaCategory(type: .screenshots, subtitle: "\(items.count) Items", isLocked: false),
+        items: items
     )
-    let category = MediaCategory(
-        type: .screenshots,
-        subtitle: "3 Items",
-        isLocked: false
-    )
-    return CategoryDetailView(
-        store: CategoryDetailStore(
-            category: category,
-            service: env.mediaService
-        )
-    )
-    .environment(env)
-    .environment(env.router)
+    return CategoryDetailView(store: store)
 }
-
+ 
+#Preview("Loading") {
+    let store = CategoryDetailStore(
+        category: MediaCategory(type: .duplicatePhotos, subtitle: "—", isLocked: false),
+        service: MockMediaService(delay: .max)
+    )
+    return CategoryDetailView(store: store)
+}
+ 
 #Preview("Empty") {
-    let env = AppEnvironment.preview(
-        mediaService: MockMediaService(groups: [])
+    let store = CategoryDetailStore.preview(
+        category: MediaCategory(type: .duplicatePhotos, subtitle: "0 Items", isLocked: false)
     )
-    let category = MediaCategory(
-        type: .duplicatePhotos,
-        subtitle: "0 Items",
-        isLocked: false
-    )
-    return CategoryDetailView(
-        store: CategoryDetailStore(
-            category: category,
-            service: env.mediaService
-        )
-    )
-    .environment(env)
-    .environment(env.router)
+    return CategoryDetailView(store: store)
 }
+ 
