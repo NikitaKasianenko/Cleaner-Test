@@ -5,13 +5,13 @@
 //  Created by Nykyta Kasianenko on 30.03.2026.
 //
 
+
 import SwiftUI
 
 struct OnboardingView: View {
-    // Достаем роутер из Environment
-    @Environment(AppRouter.self) private var router
+    @EnvironmentObject private var router: AppRouter
     @State private var currentPage = 0
-    
+
     var body: some View {
         VStack(spacing: 0) {
             TabView(selection: $currentPage) {
@@ -32,17 +32,13 @@ struct OnboardingView: View {
             }
             .padding(.top, 30)
             .padding(.bottom, 24)
-            
+
             Button(action: {
                 if currentPage < onboardingPages.count - 1 {
                     withAnimation { currentPage += 1 }
                 } else {
-                    // Запускаємо асинхронне завдання
                     Task {
-                        // 1. Чекаємо, поки юзер натисне "Дозволити" або "Відхилити"
                         await router.requestPhotoAccess()
-                        
-                        // 2. Незалежно від його вибору, пускаємо його в додаток
                         router.completeOnboarding()
                     }
                 }
@@ -64,23 +60,20 @@ struct OnboardingView: View {
 
 struct OnboardingPageView: View {
     let page: OnboardingPage
-    
+
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
-            
             Image(page.image)
                 .resizable()
                 .scaledToFit()
                 .frame(height: 498)
                 .padding(.bottom, 22)
-            
             Text(page.title)
                 .font(.title)
                 .fontWeight(.semibold)
                 .multilineTextAlignment(.center)
                 .padding(.bottom, 8)
-            
             Text(page.description)
                 .font(.body)
                 .foregroundColor(.gray)
@@ -88,16 +81,8 @@ struct OnboardingPageView: View {
                 .padding(.horizontal, 32)
                 .padding(.bottom, 8)
                 .fixedSize(horizontal: false, vertical: true)
-            
-            
             Spacer()
         }
         .padding(.top, 44)
     }
-}
-
-#Preview {
-    // Даем превьюшке фейковый роутер, чтобы она не ругалась
-    OnboardingView()
-        .environment(AppRouter())
 }

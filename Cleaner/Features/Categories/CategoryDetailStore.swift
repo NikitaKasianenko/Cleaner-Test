@@ -1,91 +1,108 @@
+//
+//  CategoryDetailStore.swift
+//  Cleaner
+//
+//  Created by Nykyta Kasianenko on 31.03.2026.
+//
+
+//
+//  CategoryDetailStore.swift
+//  Cleaner
+//
+
 import SwiftUI
 import Photos
+import Combine
 
+// @Observable → ObservableObject для iOS 16
 @MainActor
-@Observable
-class CategoryDetailStore {
-    var category: MediaCategory
-    
-    // Дані для відображення
-    var items: [MediaItem] = []
-    var groups: [MediaGroup] = []
-    
-    var isLoading: Bool = true
-    var showingDeleteAlert = false
-    
-    @ObservationIgnored
+final class CategoryDetailStore: ObservableObject {
+    @Published var category: MediaCategory
+    @Published var items: [MediaItem] = []
+    @Published var groups: [MediaGroup] = []
+    @Published var isLoading: Bool = true
+    @Published var showingDeleteAlert = false
+
     private let service: any MediaServiceProtocol
-    
+
     init(category: MediaCategory, service: any MediaServiceProtocol) {
         self.category = category
         self.service = service
     }
-    
-    // MARK: - Обчислювальні властивості (UI Logic)
-    
-    var isGroupedLayout: Bool {
-        category.title.contains("Duplicate") || category.title.contains("Similar")
+
+    // MARK: - Preview factory
+
+    static func preview(
+        category: MediaCategory,
+        groups: [MediaGroup] = [],
+        items: [MediaItem] = []
+    ) -> CategoryDetailStore {
+        let store = CategoryDetailStore(
+            category: category,
+            service: MockMediaService()
+        )
+        store.groups = groups
+        store.items = items
+        store.isLoading = false
+        return store
     }
-    
+
+    var isGroupedLayout: Bool { category.isGrouped }
+
     var selectedItemsCount: Int {
-        isGroupedLayout ?
-            groups.flatMap { $0.items }.filter { $0.isSelected }.count :
-            items.filter { $0.isSelected }.count
+        isGroupedLayout
+            ? groups.flatMap { $0.items }.filter { $0.isSelected }.count
+            : items.filter { $0.isSelected }.count
     }
-    
+
     var selectedItemsSize: Double {
-        isGroupedLayout ?
-            groups.flatMap { $0.items }.filter { $0.isSelected }.reduce(0) { $0 + $1.fileSize } :
-            items.filter { $0.isSelected }.reduce(0) { $0 + $1.fileSize }
+        isGroupedLayout
+            ? groups.flatMap { $0.items }.filter { $0.isSelected }.reduce(0) { $0 + $1.fileSize }
+            : items.filter { $0.isSelected }.reduce(0) { $0 + $1.fileSize }
     }
-    
+
     var isAnySelected: Bool { selectedItemsCount > 0 }
-    
+
     var isAllSelected: Bool {
         if isGroupedLayout {
-            let allSelectable = groups.flatMap { $0.items }.filter { !$0.isBest }
-            return !allSelectable.isEmpty && allSelectable.allSatisfy { $0.isSelected }
+            let selectable = groups.flatMap { $0.items }.filter { !$0.isBest }
+            return !selectable.isEmpty && selectable.allSatisfy { $0.isSelected }
         } else {
             return !items.isEmpty && items.allSatisfy { $0.isSelected }
         }
     }
-    
+
     var totalPhotosCount: Int {
         isGroupedLayout ? groups.reduce(0) { $0 + $1.items.count } : items.count
     }
-    
+
     var totalStorageString: String {
-        let totalMB = isGroupedLayout ?
-            groups.flatMap { $0.items }.reduce(0) { $0 + $1.fileSize } :
-            items.reduce(0) { $0 + $1.fileSize }
-        
-        if totalMB >= 1024 {
-            return String(format: "%.1f GB", totalMB / 1024.0)
-        } else {
-            return String(format: "%.1f MB", totalMB)
-        }
+        let totalMB = isGroupedLayout
+            ? groups.flatMap { $0.items }.reduce(0) { $0 + $1.fileSize }
+            : items.reduce(0) { $0 + $1.fileSize }
+
+        return totalMB >= 1024
+            ? String(format: "%.1f GB", totalMB / 1024.0)
+            : String(format: "%.1f MB", totalMB)
     }
-    
-    // MARK: - Завантаження даних
-    
+
+    // MARK: - Load
+
     func loadData() async {
         self.isLoading = true
         let fetchedGroups = await service.fetchCategoryDetails(for: category)
-        
+
         if isGroupedLayout {
             self.groups = fetchedGroups
         } else {
             self.items = fetchedGroups.first?.items ?? []
         }
-        
-        // Оновлюємо кеш на головному екрані відразу після завантаження
-        service.updateCategoryStats(for: category.title, newCount: self.totalPhotosCount)
-        
+
         withAnimation { self.isLoading = false }
     }
-    
-    // MARK: - Логіка виділення (Selection)
-    
+
+    // MARK: - Selection
+
     func toggleSelection(for itemID: UUID) {
         if isGroupedLayout {
             for gIndex in groups.indices {
@@ -100,18 +117,17 @@ class CategoryDetailStore {
             }
         }
     }
-    
+
     func toggleGroupSelection(for groupID: UUID) {
         guard let gIndex = groups.firstIndex(where: { $0.id == groupID }) else { return }
         let newValue = !groups[gIndex].isAllSelected
-        
+
         for iIndex in groups[gIndex].items.indices {
-            // Не чіпаємо "Best" при масовому виділенні
             if newValue && groups[gIndex].items[iIndex].isBest { continue }
             groups[gIndex].items[iIndex].isSelected = newValue
         }
     }
-    
+
     func toggleSelectAll() {
         let newValue = !isAllSelected
         if isGroupedLayout {
@@ -127,50 +143,43 @@ class CategoryDetailStore {
             }
         }
     }
-    
-    // MARK: - ФІЗИЧНЕ ВИДАЛЕННЯ (Нова логіка)
 
     func deleteSelectedItems() {
-        let assetsToDelete: [PHAsset]
-        if isGroupedLayout {
-            assetsToDelete = groups.flatMap { $0.items }.filter { $0.isSelected }.map { $0.asset }
-        } else {
-            assetsToDelete = items.filter { $0.isSelected }.map { $0.asset }
-        }
-        
+        let assetsToDelete: [PHAsset] = isGroupedLayout
+            ? groups.flatMap { $0.items }.filter { $0.isSelected }.map { $0.asset }
+            : items.filter { $0.isSelected }.map { $0.asset }
+
         guard !assetsToDelete.isEmpty else { return }
-        
+
         Task {
             do {
                 try await PHPhotoLibrary.shared().performChanges {
                     PHAssetChangeRequest.deleteAssets(assetsToDelete as NSArray)
                 }
-                
-                self.handleSuccessfulDeletion(assets: assetsToDelete)
-                
+                handleSuccessfulDeletion(assets: assetsToDelete)
             } catch {
-                print("\(error.localizedDescription)")
+                print("Delete failed: \(error.localizedDescription)")
             }
         }
     }
-    
+
     private func handleSuccessfulDeletion(assets: [PHAsset]) {
         let deletedIds = Set(assets.map { $0.localIdentifier })
-        
+
         withAnimation(.easeInOut) {
             if isGroupedLayout {
                 for i in groups.indices {
                     groups[i].items.removeAll { deletedIds.contains($0.asset.localIdentifier) }
                 }
-                // Видаляємо групу, якщо в ній лишилося 0 або 1 фото (вже не дублікат)
                 groups.removeAll { $0.items.count <= 1 }
             } else {
                 items.removeAll { deletedIds.contains($0.asset.localIdentifier) }
             }
         }
-        
-        // Оновлюємо статистику в сервісі та на головному екрані
-        service.updateCategoryStats(for: category.title, newCount: self.totalPhotosCount)
+
+        Task {
+            await service.updateCategoryStats(for: category.type, newCount: totalPhotosCount)
+        }
         self.showingDeleteAlert = false
     }
 }
