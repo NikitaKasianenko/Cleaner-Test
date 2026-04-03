@@ -103,11 +103,16 @@ extension CategoryDetailView {
  
             let isVideo = store.category.type.isVideoCategory
             HStack(spacing: 12) {
+            
                 infoBadge(
-                    icon: isVideo ? "video.fill" : "photo.fill",
+                    icon: "video.fill",
                     text: "\(store.totalPhotosCount) \(isVideo ? "Videos" : "Photos")"
                 )
-                infoBadge(icon: "externaldrive.fill", text: store.totalStorageString)
+            
+                infoBadge(
+                    icon: "archivebox.fill",
+                    text: store.totalStorageString
+                )
             }
         }
         .padding(.horizontal, 20)
@@ -116,20 +121,20 @@ extension CategoryDetailView {
     }
  
     private func infoBadge(icon: String, text: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-            Text(text)
-        }
-        .font(.system(size: 13, weight: .medium))
-        .foregroundColor(.gray)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.white)
-        .cornerRadius(6)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color(UIColor.systemGray5), lineWidth: 1)
-        )
+        HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(.system(size: 16))
+                        .foregroundColor(Color(white: 0.15))
+                    
+                    Text(text)
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundColor(.gray)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.white)
+                .cornerRadius(10)
+                .shadow(radius: 3)
     }
  
     private var emptyStateView: some View {

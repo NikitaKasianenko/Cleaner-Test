@@ -14,18 +14,27 @@ struct CleanerApp: App {
  
     var body: some Scene {
         WindowGroup {
-            ZStack {
-                if env.router.hasCompletedOnboarding {
-                    MainView()
-                        .transition(.opacity)
-                } else {
-                    OnboardingView()
-                        .transition(.opacity)
-                }
-            }
-            .environmentObject(env)
-            .environmentObject(env.router)
+            RootView()
+                .environmentObject(env)
+                .environmentObject(env.router)
         }
+    }
+}
+
+struct RootView: View {
+    @EnvironmentObject private var router: AppRouter
+ 
+    var body: some View {
+        ZStack {
+            if router.hasCompletedOnboarding {
+                MainView()
+                    .transition(.opacity)
+            } else {
+                OnboardingView()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.5), value: router.hasCompletedOnboarding)
     }
 }
  
@@ -33,22 +42,17 @@ struct CleanerApp: App {
     let env = AppEnvironment.preview()
     env.router.hasCompletedOnboarding = false
  
-    return ZStack {
-        OnboardingView()
-    }
-    .environmentObject(env)
-    .environmentObject(env.router)
+    return RootView()
+        .environmentObject(env)
+        .environmentObject(env.router)
 }
  
-#Preview("Main — onboarding done") {
+#Preview("Main") {
     let env = AppEnvironment.preview()
     env.router.hasCompletedOnboarding = true
     env.router.hasPhotoAccess = true
  
-    return ZStack {
-        MainView()
-    }
-    .environmentObject(env)
-    .environmentObject(env.router)
+    return RootView()
+        .environmentObject(env)
+        .environmentObject(env.router)
 }
- 
